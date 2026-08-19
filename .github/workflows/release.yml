@@ -42,13 +42,15 @@ jobs:
               -o "dist/keitaro-worker-linux-$arch" ./cmd/keitaro-worker
           done
           (cd dist && sha256sum keitaro-worker-linux-* > SHA256SUMS)
-      - name: Login to GHCR
-        run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build and publish multi-architecture image
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and publish multi-architecture image
         run: |
           set -euo pipefail
+          mkdir -p /run/lazyarb-runner
+          exec 9>/run/lazyarb-runner/docker-build.lock
+          flock -w 300 9
+          printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           version="${GITHUB_REF_NAME#v}"
           docker buildx build \
             --platform linux/amd64,linux/arm64 \

@@ -30,6 +30,11 @@ jobs:
           sh -n install-runtime.sh
           scripts/test-install-runtime.sh
       - name: Build hardened image
-        run: docker build --build-arg VERSION=ci --build-arg COMMIT="$GITHUB_SHA" -t lazyarb/keitaro-worker:ci .
+        run: |
+          set -euo pipefail
+          mkdir -p /run/lazyarb-runner
+          exec 9>/run/lazyarb-runner/docker-build.lock
+          flock -w 300 9
+          docker build --build-arg VERSION=ci --build-arg COMMIT="$GITHUB_SHA" -t lazyarb/keitaro-worker:ci .
       - name: Smoke-test image
         run: docker run --rm --entrypoint /usr/local/bin/keitaro-worker lazyarb/keitaro-worker:ci version
