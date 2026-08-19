@@ -1,0 +1,6 @@
+worker.log
+tmp/
+pending/
+processing/
+retry/
+failed/
