@@ -1,0 +1,8 @@
+.git
+.github
+coverage.out
+dist
+docs
+scripts
+*.md
+LICENSE
