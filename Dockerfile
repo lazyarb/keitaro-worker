@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG BUILDPLATFORM=linux/amd64
-FROM --platform=$BUILDPLATFORM golang:1.24.11-alpine3.22@sha256:fb828ef85a4c4140fae45f145a84ca9c0a83fd0baa437a301b35b551e91ceed5 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine3.22@sha256:727cfc3c40be55cd1bc9a4a059406b28a059857e3be752aa9d09531e12c20c56 AS build
 
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
