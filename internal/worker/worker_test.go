@@ -69,7 +69,9 @@ func TestRunOnceRetriesTemporaryFailure(t *testing.T) {
 
 func TestRunOnceDeadLettersPermanentFailureWithoutTokenLeak(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
 		response.WriteHeader(http.StatusUnauthorized)
+		_, _ = response.Write([]byte(`{"reason":"unknown_code","detail":"secret-token sub-1"}`))
 	}))
 	defer server.Close()
 	config, endpointID := testRuntimeConfig(t, server.URL+"/postback/secret-token")
@@ -89,6 +91,15 @@ func TestRunOnceDeadLettersPermanentFailureWithoutTokenLeak(t *testing.T) {
 	}
 	if strings.Contains(string(logPayload), "secret-token") || strings.Contains(string(logPayload), "sub-1") {
 		t.Fatalf("worker log leaks event credentials: %s", logPayload)
+	}
+	if !strings.Contains(string(logPayload), "401 Unauthorized: unknown_code") {
+		t.Fatalf("worker log omits safe response reason: %s", logPayload)
+	}
+}
+
+func TestResponseErrorTextRejectsUnsafeServerDetails(t *testing.T) {
+	if got := responseErrorText("400 Bad Request", []byte(`{"reason":"token abc"}`)); got != "400 Bad Request" {
+		t.Fatalf("responseErrorText() = %q", got)
 	}
 }
 

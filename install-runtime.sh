@@ -2,17 +2,16 @@
 
 set -eu
 
-runtime_version=1.0.0
+runtime_version=1.1.0
 
 keitaro_layout=${LAZYARB_KEITARO_LAYOUT:-}
 redirect_dir=${LAZYARB_KEITARO_REDIRECT_DIR:-}
-queue_root=${LAZYARB_QUEUE_ROOT:-/var/lib/lazyarb-keitaro}
+queue_root=${LAZYARB_QUEUE_ROOT:-}
 config_root=${LAZYARB_CONFIG_ROOT:-/etc/lazyarb-keitaro}
 log_root=${LAZYARB_LOG_ROOT:-/var/log/lazyarb-keitaro}
 service_file=${LAZYARB_SERVICE_FILE:-/etc/systemd/system/lazyarb-keitaro-worker.service}
 logrotate_file=${LAZYARB_LOGROTATE_FILE:-/etc/logrotate.d/lazyarb-keitaro-worker}
 binary_file=${LAZYARB_BINARY_FILE:-/usr/local/libexec/lazyarb-keitaro-worker}
-volume_env=${LAZYARB_KEITARO_VOLUME_ENV:-/etc/keitaro/env/components/tracker-traffic.local.env}
 worker_binary_url=${LAZYARB_WORKER_BINARY_URL:-}
 worker_binary_sha256=${LAZYARB_WORKER_BINARY_SHA256:-}
 worker_binary_source=${LAZYARB_WORKER_BINARY_SOURCE_FILE:-}
@@ -60,6 +59,17 @@ if [ -z "$keitaro_layout" ]; then
 fi
 case "$keitaro_layout" in 10|11) ;; *) fail 'LAZYARB_KEITARO_LAYOUT must be 10 or 11' ;; esac
 
+if [ -z "$queue_root" ]; then
+  case "$keitaro_layout" in
+    11)
+      keitaro_root=${redirect_dir%/var/redirects}
+      [ "$keitaro_root" != "$redirect_dir" ] || fail 'could not derive Keitaro 11 root from redirects directory'
+      queue_root=$keitaro_root/var/lazyarb-keitaro
+      ;;
+    10) queue_root=/var/lib/lazyarb-keitaro ;;
+  esac
+fi
+
 validate_path 'queue root' "$queue_root"
 validate_path 'config root' "$config_root"
 validate_path 'log root' "$log_root"
@@ -67,7 +77,6 @@ validate_path 'service file' "$service_file"
 validate_path 'logrotate file' "$logrotate_file"
 validate_path 'binary file' "$binary_file"
 validate_path 'redirect directory' "$redirect_dir"
-if [ "$keitaro_layout" = 11 ]; then validate_path 'Keitaro volume environment file' "$volume_env"; fi
 
 mkdir -p "$queue_root/tmp" "$queue_root/pending" "$queue_root/processing" "$queue_root/retry" "$queue_root/failed" "$queue_root/state"
 mkdir -p "$config_root/endpoints.d" "$log_root" "$(dirname "$service_file")" "$(dirname "$logrotate_file")"
@@ -80,48 +89,8 @@ fi
 worker_uid=$(id -u lazyarb-keitaro)
 worker_gid=$(id -g lazyarb-keitaro)
 
-if [ "$keitaro_layout" = 11 ]; then
-  require_command docker
-  require_command kctl
-  docker_bin=$(command -v docker)
-  find_tracker_container() {
-    "$docker_bin" ps --format '{{.ID}} {{.Image}}' | awk '$2 ~ /(^|\/)keitaro\/tracker(:|@)/ { print $1; exit }'
-  }
-  tracker_container=${LAZYARB_KEITARO_TRACKER_CONTAINER:-}
-  if [ -z "$tracker_container" ]; then tracker_container=$(find_tracker_container); fi
-  [ -n "$tracker_container" ] || fail 'Keitaro tracker traffic container was not found'
-  tracker_image=$("$docker_bin" inspect --format '{{.Config.Image}}' "$tracker_container")
-  case "$tracker_image" in */keitaro/tracker:*|keitaro/tracker:*|*/keitaro/tracker@*|keitaro/tracker@*) ;; *) fail 'selected container is not a Keitaro tracker runtime' ;; esac
-
-  runtime_redirect_dir=/data/var/redirects
-  queue_gid=$("$docker_bin" exec "$tracker_container" stat -c %g "$runtime_redirect_dir") || fail 'could not resolve tracker queue group'
-  case "$queue_gid" in ''|*[!0-9]*) fail 'tracker queue group is invalid' ;; esac
-
-  mkdir -p "$(dirname "$volume_env")"
-  touch "$volume_env"
-  volume_spec=$queue_root:/data/lazyarb-keitaro
-  needs_tune=0
-  if grep -Eq ':/data/lazyarb-keitaro([[:space:]]|")' "$volume_env"; then
-    grep -Fq "$volume_spec" "$volume_env" || fail 'another source is already mounted at /data/lazyarb-keitaro'
-  else
-    printf '\nTRACKER_TRAFFIC_VOLUMES="${TRACKER_TRAFFIC_VOLUMES} %s"\n' "$volume_spec" >> "$volume_env"
-    needs_tune=1
-  fi
-  if ! "$docker_bin" exec "$tracker_container" test -d /data/lazyarb-keitaro/pending; then needs_tune=1; fi
-  if [ "$needs_tune" -eq 1 ]; then
-    printf 'Warning: kctl tune restarts Keitaro tracker services; campaign traffic can be unavailable for several seconds.\n' >&2
-    kctl tune || fail 'kctl tune failed while applying the queue volume'
-  fi
-
-  tracker_container=${LAZYARB_KEITARO_TRACKER_CONTAINER:-}
-  if [ -z "$tracker_container" ]; then tracker_container=$(find_tracker_container); fi
-  [ -n "$tracker_container" ] || fail 'Keitaro tracker traffic container is not running'
-  "$docker_bin" exec "$tracker_container" test -d /data/lazyarb-keitaro/pending || fail 'queue volume is not mounted in the tracker runtime'
-  "$docker_bin" exec "$tracker_container" php -r '$d="/data/lazyarb-keitaro/tmp"; $p=$d."/.probe-".bin2hex(random_bytes(8)); exit(is_dir($d) && file_put_contents($p,"ok",LOCK_EX)===2 && unlink($p) ? 0 : 1);' || fail 'queue is not writable in the tracker runtime'
-else
-  queue_gid=$(stat -c %g "$redirect_dir")
-  case "$queue_gid" in ''|*[!0-9]*) fail 'Keitaro queue group is invalid' ;; esac
-fi
+queue_gid=$(stat -c %g "$redirect_dir")
+case "$queue_gid" in ''|*[!0-9]*) fail 'Keitaro queue group is invalid' ;; esac
 
 chown "$worker_uid:$queue_gid" "$queue_root" "$queue_root/tmp" "$queue_root/pending" "$queue_root/processing" "$queue_root/retry" "$queue_root/failed" "$queue_root/state"
 chmod 2770 "$queue_root" "$queue_root/tmp" "$queue_root/pending" "$queue_root/processing" "$queue_root/retry" "$queue_root/failed" "$queue_root/state"

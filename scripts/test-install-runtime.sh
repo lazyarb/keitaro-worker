@@ -67,44 +67,18 @@ test_keitaro_11() {
   root=$temporary_root/k11
   fake_bin=$root/bin
   make_fake_commands "$fake_bin"
-  mkdir -p "$root/var/redirects" "$root/keitaro-env"
-  state=$root/tuned
-  tune_count=$root/tune-count
+  mkdir -p "$root/var/redirects"
   printf '#!/bin/sh\nexit 0\n' > "$root/source-worker"
   chmod +x "$root/source-worker"
-  cat > "$fake_bin/docker" <<EOF
-#!/bin/sh
-case "\$1" in
-  ps) printf 'tracker-id registry.keitaro.io/keitaro/tracker:11.8.8\\n' ;;
-  inspect) printf 'registry.keitaro.io/keitaro/tracker:11.8.8\\n' ;;
-  exec)
-    case "\$*" in
-      *' stat -c %g '*) printf '1000\\n' ;;
-      *' test -d /data/lazyarb-keitaro/pending'*) test -f '$state' ;;
-      *) exit 0 ;;
-    esac
-    ;;
-  pull) exit 0 ;;
-  *) exit 0 ;;
-esac
-EOF
-  cat > "$fake_bin/kctl" <<EOF
-#!/bin/sh
-touch '$state'
-printf 'tune\n' >> '$tune_count'
-EOF
-  chmod +x "$fake_bin/docker" "$fake_bin/kctl"
 
   PATH="$fake_bin:$PATH" \
   LAZYARB_ALLOW_UNPRIVILEGED=1 \
   LAZYARB_KEITARO_LAYOUT=11 \
   LAZYARB_KEITARO_REDIRECT_DIR="$root/var/redirects" \
-  LAZYARB_QUEUE_ROOT="$root/queue" \
   LAZYARB_CONFIG_ROOT="$root/config" \
   LAZYARB_LOG_ROOT="$root/log" \
   LAZYARB_SERVICE_FILE="$root/systemd/lazyarb-keitaro-worker.service" \
   LAZYARB_LOGROTATE_FILE="$root/logrotate/lazyarb-keitaro-worker" \
-  LAZYARB_KEITARO_VOLUME_ENV="$root/keitaro-env/tracker-traffic.local.env" \
   LAZYARB_BINARY_FILE="$root/libexec/keitaro-worker" \
   LAZYARB_WORKER_BINARY_SOURCE_FILE="$root/source-worker" \
   LAZYARB_SKIP_SERVICE_START=1 \
@@ -114,30 +88,27 @@ EOF
   grep -Fq "User=65532" "$root/systemd/lazyarb-keitaro-worker.service"
   grep -Fq "SupplementaryGroups=65533" "$root/systemd/lazyarb-keitaro-worker.service"
   grep -Fq "ExecStart=$root/libexec/keitaro-worker run" "$root/systemd/lazyarb-keitaro-worker.service"
+  grep -Fq "Environment=\"LAZYARB_QUEUE_ROOT=$root/var/lazyarb-keitaro\"" "$root/systemd/lazyarb-keitaro-worker.service"
   grep -Fq "ProtectSystem=strict" "$root/systemd/lazyarb-keitaro-worker.service"
-  if grep -Eq 'docker|/var/run/docker.sock' "$root/systemd/lazyarb-keitaro-worker.service"; then
-    printf 'worker service must run the host binary without Docker\n' >&2
-    exit 1
-  fi
-  grep -Fq "$root/queue:/data/lazyarb-keitaro" "$root/keitaro-env/tracker-traffic.local.env"
+  test -d "$root/var/lazyarb-keitaro/pending"
 
   PATH="$fake_bin:$PATH" \
   LAZYARB_ALLOW_UNPRIVILEGED=1 \
   LAZYARB_KEITARO_LAYOUT=11 \
   LAZYARB_KEITARO_REDIRECT_DIR="$root/var/redirects" \
-  LAZYARB_QUEUE_ROOT="$root/queue" \
   LAZYARB_CONFIG_ROOT="$root/config" \
   LAZYARB_LOG_ROOT="$root/log" \
   LAZYARB_SERVICE_FILE="$root/systemd/lazyarb-keitaro-worker.service" \
   LAZYARB_LOGROTATE_FILE="$root/logrotate/lazyarb-keitaro-worker" \
-  LAZYARB_KEITARO_VOLUME_ENV="$root/keitaro-env/tracker-traffic.local.env" \
   LAZYARB_BINARY_FILE="$root/libexec/keitaro-worker" \
   LAZYARB_WORKER_BINARY_SOURCE_FILE="$root/source-worker" \
   LAZYARB_SKIP_SERVICE_START=1 \
   sh "$repository_root/install-runtime.sh" >/dev/null 2>&1
 
-  test "$(wc -l < "$tune_count")" -eq 1
-  test "$(grep -Fc "$root/queue:/data/lazyarb-keitaro" "$root/keitaro-env/tracker-traffic.local.env")" -eq 1
+  if grep -Eq 'docker|podman|kctl|TRACKER_TRAFFIC_VOLUMES' "$repository_root/install-runtime.sh"; then
+    printf 'runtime installer must not depend on the Keitaro container layout\n' >&2
+    exit 1
+  fi
 }
 
 test_common_service_model() {

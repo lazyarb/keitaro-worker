@@ -7,7 +7,7 @@ Keitaro click pipeline
         |
         | atomic local file write
         v
-/var/lib/lazyarb-keitaro/pending
+Keitaro-local queue/pending
         |
         | asynchronous claim and delivery
         v
@@ -20,9 +20,9 @@ The redirect performs no network call to the worker. It writes to `tmp`, flushes
 
 Both supported Keitaro versions run the same static binary from `/usr/local/libexec/lazyarb-keitaro-worker` under the dedicated `lazyarb-keitaro` system user. A hardened systemd unit grants write access only to the queue and log directories and read access to the endpoint registry.
 
-For Keitaro 11, the tracker container receives `/var/lib/lazyarb-keitaro` as a read/write bind mount at `/data/lazyarb-keitaro`. Docker is used only while installing or validating that mount. The worker remains a host service and has no Docker socket access.
+Keitaro 10 uses `/var/lib/lazyarb-keitaro`. Keitaro 11 uses `/var/www/keitaro/var/lazyarb-keitaro`, which remains inside the supported custom extension tree and is visible to both the tracker runtime and the host worker. No container discovery or additional volume mount is required.
 
-For Keitaro 10, the redirect writes directly to the host queue. Setgid queue directories preserve the Keitaro redirect group so the redirect and worker can exchange files without world-writable permissions.
+Setgid queue directories preserve the Keitaro redirect group so the redirect and worker can exchange files without world-writable permissions.
 
 ## Queue states
 

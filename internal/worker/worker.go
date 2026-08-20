@@ -11,9 +11,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 )
+
+var responseReasonPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 type BuildInfo struct {
 	Version string
@@ -203,14 +206,32 @@ func (runtime *runtime) deliver(ctx context.Context, item claimedEvent) delivery
 		return result
 	}
 	defer response.Body.Close()
-	_, _ = io.CopyN(io.Discard, response.Body, 4096)
+	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 	result.httpCode = response.StatusCode
 	result.ok = response.StatusCode >= 200 && response.StatusCode < 300
 	result.retryable = response.StatusCode == http.StatusRequestTimeout || response.StatusCode == http.StatusTooEarly || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500
 	if !result.ok {
-		result.errorText = response.Status
+		result.errorText = responseErrorText(response.Status, responseBody)
 	}
 	return result
+}
+
+func responseErrorText(status string, body []byte) string {
+	payload := struct {
+		Reason string `json:"reason"`
+		Error  string `json:"error"`
+	}{}
+	if json.Unmarshal(body, &payload) != nil {
+		return status
+	}
+	reason := payload.Reason
+	if reason == "" {
+		reason = payload.Error
+	}
+	if !responseReasonPattern.MatchString(reason) {
+		return status
+	}
+	return status + ": " + reason
 }
 
 func (runtime *runtime) writeHeartbeat() error {
